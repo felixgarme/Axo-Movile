@@ -161,8 +161,16 @@ export default function HomeScreen() {
                   )
                 );
                 Alert.alert('Conexión exitosa', `El dispositivo se conectó al WiFi.\nIP: ${ipOnly}`);
+              } else if (decodedMessage === 'ERROR:WIFI') {
+                // Nueva funcionalidad: Manejo de error de contraseña o conexión WiFi
+                setDevices((prev) =>
+                  prev.map((d) =>
+                    d.id === readyDevice.id ? { ...d, ip: 'Error de red' } : d
+                  )
+                );
+                Alert.alert('Error de conexión', 'No se pudo conectar al WiFi. Verifica que el nombre de la red y la contraseña sean correctos.');
               } else {
-                // Si no empieza con IP:, asumimos que es el modelo del dispositivo enviado al conectarse
+                // Si no empieza con IP ni es error, asumimos que es el modelo del dispositivo enviado al conectarse
                 setDevices((prev) =>
                   prev.map((d) =>
                     d.id === readyDevice.id ? { ...d, name: decodedMessage } : d
@@ -306,18 +314,23 @@ export default function HomeScreen() {
         {devices.map((esp) => (
           <ThemedView key={esp.id} style={styles.deviceCard}>
             <View style={styles.deviceInfo}>
-              <TouchableOpacity style={styles.iconContainer} onPress={() => navigateToDevise(esp.ip)}>
-                <Ionicons name="hardware-chip" size={28} color="#0a7ea4" />
-              </TouchableOpacity>
+              
+              {/* Contenedor de detalles del dispositivo (Movido a la izquierda) */}
               <View style={styles.deviceDetails}>
                 <ThemedText type="defaultSemiBold" style={{ fontSize: 18 }}>
                   {esp.name || 'Dispositivo Desconocido'}
                 </ThemedText>
                 <ThemedText style={{ fontSize: 12, color: 'gray' }}>ID: {esp.id}</ThemedText>
                 <ThemedText>
-                  IP: <ThemedText style={{ color: esp.ip.includes('.') ? 'green' : 'gray' }}>{esp.ip}</ThemedText>
+                  IP: <ThemedText style={{ color: esp.ip.includes('.') ? 'green' : (esp.ip === 'Error de red' ? 'red' : 'gray') }}>{esp.ip}</ThemedText>
                 </ThemedText>
               </View>
+
+              {/* Contenedor del ícono (Movido a la derecha y cambiado a "settings") */}
+              <TouchableOpacity style={styles.iconContainer} onPress={() => navigateToDevise(esp.ip)}>
+                <Ionicons name="settings" size={28} color="#0a7ea4" />
+              </TouchableOpacity>
+              
             </View>
           </ThemedView>
         ))}
@@ -366,7 +379,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconContainer: {
-    paddingRight: 10,
+    paddingLeft: 10, // Cambiado de paddingRight a paddingLeft para dar espacio a la izquierda
     justifyContent: 'center',
     alignItems: 'center',
   },
