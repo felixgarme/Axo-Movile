@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import DeviceCard from '@/components/DeviceCard'; // Asegúrate de que la ruta coincida
 
 const bleManager = new BleManager();
 
@@ -65,10 +66,10 @@ export default function HomeScreen() {
       const storedDevicesStr = await AsyncStorage.getItem('@devices_json');
       if (storedDevicesStr) {
         const storedDevices: ESPDevice[] = JSON.parse(storedDevicesStr);
-        
+
         setDevices(prevDevices => {
           // Comprobar si hay alguna diferencia real (como una eliminación desde otra pantalla)
-          const isDifferent = 
+          const isDifferent =
             prevDevices.length !== storedDevices.length ||
             prevDevices.some(p => {
               const s = storedDevices.find(sd => sd.id === p.id);
@@ -151,7 +152,7 @@ export default function HomeScreen() {
 
             if (characteristic?.value) {
               const decodedMessage = decode(characteristic.value);
-              
+
               if (decodedMessage.startsWith('IP:')) {
                 // Si el mensaje es la IP
                 const ipOnly = decodedMessage.substring(3);
@@ -161,7 +162,7 @@ export default function HomeScreen() {
                   )
                 );
                 Alert.alert('Conexión exitosa', `El dispositivo se conectó al WiFi.\nIP: ${ipOnly}`);
-              } else if (decodedMessage === 'ERROR:WIFI') {
+              } else if (decodedMessage === 'No se pudo conectar' || decodedMessage === 'ERROR:WIFI') {
                 // Nueva funcionalidad: Manejo de error de contraseña o conexión WiFi
                 setDevices((prev) =>
                   prev.map((d) =>
@@ -188,29 +189,29 @@ export default function HomeScreen() {
   };
 
   const scanForNewDevice = async () => {
-      const hasPermissions = await requestAndroidPermissions();
-      if (!hasPermissions) {
-        setConnectionStatus('Faltan permisos');
+    const hasPermissions = await requestAndroidPermissions();
+    if (!hasPermissions) {
+      setConnectionStatus('Faltan permisos');
+      return;
+    }
+
+    setConnectionStatus('Escaneando nuevo dispositivo...');
+
+    // Filtramos por el SERVICE_UUID en lugar del nombre del dispositivo
+    bleManager.startDeviceScan([SERVICE_UUID], null, (error, device) => {
+      if (error) {
+        console.error("Error detallado:", error);
+        setConnectionStatus(`Error: ${error.message}`);
         return;
       }
 
-      setConnectionStatus('Escaneando nuevo dispositivo...');
-
-      // Filtramos por el SERVICE_UUID en lugar del nombre del dispositivo
-      bleManager.startDeviceScan([SERVICE_UUID], null, (error, device) => {
-        if (error) {
-          console.error("Error detallado:", error);
-          setConnectionStatus(`Error: ${error.message}`);
-          return;
-        }
-
-        // Si detecta un dispositivo con nuestro UUID de servicio
-        if (device) {
-          bleManager.stopDeviceScan();
-          connectToDevice(device);
-        }
-      });
-    };
+      // Si detecta un dispositivo con nuestro UUID de servicio
+      if (device) {
+        bleManager.stopDeviceScan();
+        connectToDevice(device);
+      }
+    });
+  };
 
   const sendWiFiCredentials = async () => {
     const connectedDevices = devices.filter(d => d.device);
@@ -254,10 +255,14 @@ export default function HomeScreen() {
     setDevices((prev) => prev.filter((d) => d.id !== id));
   };
 
-  const navigateToDevise = (ipAddress: string) => {
+  // Se modificó esta función para recibir también el nombre
+  const navigateToDevise = (ipAddress: string, deviceName: string | null) => {
     router.push({
       pathname: '/devise',
-      params: { ip: ipAddress }
+      params: { 
+        ip: ipAddress,
+        name: deviceName || 'Desconocido' // Pasamos el nombre como parámetro
+      }
     });
   };
 
@@ -270,7 +275,7 @@ export default function HomeScreen() {
           style={styles.reactLogo}
         />
       }>
-      
+
       {devices.some(d => d.device) && (
         <ThemedView style={styles.stepContainer}>
           <ThemedText type="subtitle">Enviar configuración WiFi</ThemedText>
@@ -311,28 +316,14 @@ export default function HomeScreen() {
           Estado actual: <ThemedText type="defaultSemiBold">{connectionStatus}</ThemedText>
         </ThemedText>
 
+        {/* Aquí renderizamos nuestro nuevo componente */}
         {devices.map((esp) => (
-          <ThemedView key={esp.id} style={styles.deviceCard}>
-            <View style={styles.deviceInfo}>
-              
-              {/* Contenedor de detalles del dispositivo (Movido a la izquierda) */}
-              <View style={styles.deviceDetails}>
-                <ThemedText type="defaultSemiBold" style={{ fontSize: 18 }}>
-                  {esp.name || 'Dispositivo Desconocido'}
-                </ThemedText>
-                <ThemedText style={{ fontSize: 12, color: 'gray' }}>ID: {esp.id}</ThemedText>
-                <ThemedText>
-                  IP: <ThemedText style={{ color: esp.ip.includes('.') ? 'green' : (esp.ip === 'Error de red' ? 'red' : 'gray') }}>{esp.ip}</ThemedText>
-                </ThemedText>
-              </View>
-
-              {/* Contenedor del ícono (Movido a la derecha y cambiado a "settings") */}
-              <TouchableOpacity style={styles.iconContainer} onPress={() => navigateToDevise(esp.ip)}>
-                <Ionicons name="settings" size={28} color="#0a7ea4" />
-              </TouchableOpacity>
-              
-            </View>
-          </ThemedView>
+          <DeviceCard
+            key={esp.id}
+            esp={esp}
+            // Actualizamos onPressSettings para pasar tanto la IP (que suele devolver el card) como el nombre
+            onPressSettings={(ipAddress) => navigateToDevise(ipAddress, esp.name)}
+          />
         ))}
       </ThemedView>
     </ParallaxScrollView>
