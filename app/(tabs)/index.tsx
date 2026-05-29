@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { BleManager, Device } from 'react-native-ble-plx';
 import { encode, decode } from 'base-64';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
@@ -22,6 +24,7 @@ interface ESPDevice {
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
   const [connectionStatus, setConnectionStatus] = useState<string>('Desconectado');
   const [devices, setDevices] = useState<ESPDevice[]>([]);
   const [ssid, setSsid] = useState('');
@@ -29,7 +32,14 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadDevices();
+
+    // Actualizar desde el JSON cada 2 segundos
+    const intervalId = setInterval(() => {
+      syncDevicesFromJson();
+    }, 2000);
+
     return () => {
+      clearInterval(intervalId); // Limpiar el intervalo al desmontar
       bleManager.destroy();
     };
   }, []);
@@ -45,6 +55,41 @@ export default function HomeScreen() {
         setDevices(JSON.parse(storedDevices));
       }
     } catch (error) {
+      console.error('Error al cargar dispositivos', error);
+    }
+  };
+
+  // Función para sincronizar sin perder las conexiones Bluetooth activas
+  const syncDevicesFromJson = async () => {
+    try {
+      const storedDevicesStr = await AsyncStorage.getItem('@devices_json');
+      if (storedDevicesStr) {
+        const storedDevices: ESPDevice[] = JSON.parse(storedDevicesStr);
+        
+        setDevices(prevDevices => {
+          // Comprobar si hay alguna diferencia real (como una eliminación desde otra pantalla)
+          const isDifferent = 
+            prevDevices.length !== storedDevices.length ||
+            prevDevices.some(p => {
+              const s = storedDevices.find(sd => sd.id === p.id);
+              return !s || s.ip !== p.ip || s.name !== p.name;
+            });
+
+          // Si no hay cambios, devolvemos el mismo estado para evitar renderizados infinitos
+          if (!isDifferent) {
+            return prevDevices;
+          }
+
+          // Si hay cambios (ej. se borró un dispositivo), cruzamos los datos nuevos con los anteriores
+          // para NO perder la propiedad 'device' que contiene la conexión Bluetooth
+          return storedDevices.map(stored => {
+            const existing = prevDevices.find(d => d.id === stored.id);
+            return existing ? { ...stored, device: existing.device } : stored;
+          });
+        });
+      }
+    } catch (error) {
+      console.error('Error sincronizando dispositivos', error);
     }
   };
 
@@ -53,13 +98,14 @@ export default function HomeScreen() {
       const dataToSave = currentDevices.map(({ id, name, ip }) => ({ id, name, ip }));
       await AsyncStorage.setItem('@devices_json', JSON.stringify(dataToSave));
     } catch (error) {
+      console.error('Error al guardar dispositivos', error);
     }
   };
 
   const requestAndroidPermissions = async () => {
     if (Platform.OS === 'android') {
       const apiLevel = Platform.Version;
-      if (apiLevel < 31) {
+      if (typeof apiLevel === 'number' && apiLevel < 31) {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
@@ -90,7 +136,7 @@ export default function HomeScreen() {
           if (exists) {
             return prev.map(d => d.id === readyDevice.id ? { ...d, device: readyDevice } : d);
           }
-          return [...prev, { id: readyDevice.id, name: readyDevice.name, device: readyDevice, ip: 'Esperando IP...' }];
+          return [...prev, { id: readyDevice.id, name: readyDevice.name || 'Desconocido', device: readyDevice, ip: 'Esperando IP...' }];
         });
         setConnectionStatus(`Conectado a ${readyDevice.name || readyDevice.id}`);
 
@@ -98,18 +144,30 @@ export default function HomeScreen() {
           SERVICE_UUID,
           CHARACTERISTIC_UUID,
           (error, characteristic) => {
-            if (error) return;
+            if (error) {
+              console.error('Error al monitorear:', error);
+              return;
+            }
 
             if (characteristic?.value) {
               const decodedMessage = decode(characteristic.value);
+              
               if (decodedMessage.startsWith('IP:')) {
+                // Si el mensaje es la IP
                 const ipOnly = decodedMessage.substring(3);
                 setDevices((prev) =>
                   prev.map((d) =>
                     d.id === readyDevice.id ? { ...d, ip: ipOnly } : d
                   )
                 );
-                Alert.alert('Conexion exitosa', `Un ESP32 se conecto al WiFi.\nIP: ${ipOnly}`);
+                Alert.alert('Conexión exitosa', `El dispositivo se conectó al WiFi.\nIP: ${ipOnly}`);
+              } else {
+                // Si no empieza con IP:, asumimos que es el modelo del dispositivo enviado al conectarse
+                setDevices((prev) =>
+                  prev.map((d) =>
+                    d.id === readyDevice.id ? { ...d, name: decodedMessage } : d
+                  )
+                );
               }
             }
           }
@@ -117,6 +175,7 @@ export default function HomeScreen() {
       })
       .catch((error) => {
         setConnectionStatus('Error al conectar');
+        console.error('Error de conexión:', error);
       });
   };
 
@@ -129,28 +188,30 @@ export default function HomeScreen() {
 
       setConnectionStatus('Escaneando nuevo dispositivo...');
 
-      bleManager.startDeviceScan(null, null, (error, device) => {
+      // Filtramos por el SERVICE_UUID en lugar del nombre del dispositivo
+      bleManager.startDeviceScan([SERVICE_UUID], null, (error, device) => {
         if (error) {
-          // AQUÍ ESTÁ LA CLAVE: Registrar el error exacto
-          console.error("Error detallado del escáner:", error);
+          console.error("Error detallado:", error);
           setConnectionStatus(`Error: ${error.message}`);
           return;
         }
 
-        if (device?.name === 'ESP32') {
+        // Si detecta un dispositivo con nuestro UUID de servicio
+        if (device) {
           bleManager.stopDeviceScan();
           connectToDevice(device);
         }
       });
     };
+
   const sendWiFiCredentials = async () => {
     const connectedDevices = devices.filter(d => d.device);
     if (connectedDevices.length === 0) {
-      Alert.alert('Error', 'Primero debes conectarte a por lo menos un ESP32.');
+      Alert.alert('Error', 'Primero debes conectarte a por lo menos un dispositivo.');
       return;
     }
     if (!ssid || !password) {
-      Alert.alert('Datos incompletos', 'Por favor ingresa el nombre de la red y la contrasena.');
+      Alert.alert('Datos incompletos', 'Por favor ingresa el nombre de la red y la contraseña.');
       return;
     }
 
@@ -170,18 +231,26 @@ export default function HomeScreen() {
           successCount++;
         }
       } catch (error) {
+        console.error('Error al enviar credenciales', error);
       }
     }
 
     if (successCount > 0) {
-      Alert.alert('Exito', `Credenciales enviadas a ${successCount} dispositivo(s). Esperando IPs...`);
+      Alert.alert('Éxito', `Credenciales enviadas a ${successCount} dispositivo(s). Esperando IPs...`);
     } else {
-      Alert.alert('Error', 'No se pudieron enviar los datos a ningun dispositivo.');
+      Alert.alert('Error', 'No se pudieron enviar los datos a ningún dispositivo.');
     }
   };
 
   const deleteDevice = (id: string) => {
     setDevices((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const navigateToDevise = (ipAddress: string) => {
+    router.push({
+      pathname: '/devise',
+      params: { ip: ipAddress }
+    });
   };
 
   return (
@@ -194,36 +263,37 @@ export default function HomeScreen() {
         />
       }>
       
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Enviar configuracion WiFi</ThemedText>
+      {devices.some(d => d.device) && (
+        <ThemedView style={styles.stepContainer}>
+          <ThemedText type="subtitle">Enviar configuración WiFi</ThemedText>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Nombre de la red (SSID)"
-          placeholderTextColor="#666"
-          value={ssid}
-          onChangeText={setSsid}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Nombre de la red (SSID)"
+            placeholderTextColor="#666"
+            value={ssid}
+            onChangeText={setSsid}
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Contrasena"
-          placeholderTextColor="#666"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Contraseña"
+            placeholderTextColor="#666"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
 
-        <Button
-          title="Enviar Credenciales"
-          onPress={sendWiFiCredentials}
-          disabled={devices.filter(d => d.device).length === 0}
-        />
-      </ThemedView>
+          <Button
+            title="Enviar Credenciales"
+            onPress={sendWiFiCredentials}
+          />
+        </ThemedView>
+      )}
 
       <ThemedView style={styles.stepContainer}>
         <View style={styles.headerRow}>
-          <ThemedText type="subtitle">Dispositivos ESP32</ThemedText>
+          <ThemedText type="subtitle">Tus Dispositivos</ThemedText>
           <TouchableOpacity style={styles.addButton} onPress={scanForNewDevice}>
             <ThemedText style={styles.addButtonText}>+</ThemedText>
           </TouchableOpacity>
@@ -236,15 +306,18 @@ export default function HomeScreen() {
         {devices.map((esp) => (
           <ThemedView key={esp.id} style={styles.deviceCard}>
             <View style={styles.deviceInfo}>
-              <View>
-                <ThemedText type="defaultSemiBold">ID: {esp.id}</ThemedText>
+              <TouchableOpacity style={styles.iconContainer} onPress={() => navigateToDevise(esp.ip)}>
+                <Ionicons name="hardware-chip" size={28} color="#0a7ea4" />
+              </TouchableOpacity>
+              <View style={styles.deviceDetails}>
+                <ThemedText type="defaultSemiBold" style={{ fontSize: 18 }}>
+                  {esp.name || 'Dispositivo Desconocido'}
+                </ThemedText>
+                <ThemedText style={{ fontSize: 12, color: 'gray' }}>ID: {esp.id}</ThemedText>
                 <ThemedText>
                   IP: <ThemedText style={{ color: esp.ip.includes('.') ? 'green' : 'gray' }}>{esp.ip}</ThemedText>
                 </ThemedText>
               </View>
-              <TouchableOpacity style={styles.deleteButton} onPress={() => deleteDevice(esp.id)}>
-                <ThemedText style={styles.deleteButtonText}>Eliminar</ThemedText>
-              </TouchableOpacity>
             </View>
           </ThemedView>
         ))}
@@ -281,27 +354,24 @@ const styles = StyleSheet.create({
   },
   deviceCard: {
     padding: 12,
-    backgroundColor: '#rgba(0,0,0,0.05)',
+    backgroundColor: 'rgba(0,0,0,0.05)',
     borderRadius: 8,
     marginVertical: 4,
     borderWidth: 1,
-    borderColor: '#rgba(0,0,0,0.1)',
+    borderColor: 'rgba(0,0,0,0.1)',
   },
   deviceInfo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  deleteButton: {
-    backgroundColor: '#ff4444',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 4,
+  iconContainer: {
+    paddingRight: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  deleteButtonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 12,
+  deviceDetails: {
+    flex: 1,
   },
   reactLogo: {
     height: 178,
