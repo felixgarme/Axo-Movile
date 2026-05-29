@@ -121,27 +121,28 @@ export default function HomeScreen() {
   };
 
   const scanForNewDevice = async () => {
-    const hasPermissions = await requestAndroidPermissions();
-    if (!hasPermissions) {
-      setConnectionStatus('Faltan permisos');
-      return;
-    }
-
-    setConnectionStatus('Escaneando nuevo dispositivo...');
-
-    bleManager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        setConnectionStatus('Error al escanear');
+      const hasPermissions = await requestAndroidPermissions();
+      if (!hasPermissions) {
+        setConnectionStatus('Faltan permisos');
         return;
       }
 
-      if (device?.name === 'ESP32') {
-        bleManager.stopDeviceScan();
-        connectToDevice(device);
-      }
-    });
-  };
+      setConnectionStatus('Escaneando nuevo dispositivo...');
 
+      bleManager.startDeviceScan(null, null, (error, device) => {
+        if (error) {
+          // AQUÍ ESTÁ LA CLAVE: Registrar el error exacto
+          console.error("Error detallado del escáner:", error);
+          setConnectionStatus(`Error: ${error.message}`);
+          return;
+        }
+
+        if (device?.name === 'ESP32') {
+          bleManager.stopDeviceScan();
+          connectToDevice(device);
+        }
+      });
+    };
   const sendWiFiCredentials = async () => {
     const connectedDevices = devices.filter(d => d.device);
     if (connectedDevices.length === 0) {
