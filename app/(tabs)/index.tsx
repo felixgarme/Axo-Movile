@@ -11,6 +11,7 @@ import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import DeviceCard from '@/components/DeviceCard'; // Asegúrate de que la ruta coincida
+import WifiConfigForm from '@/components/WifiConfigForm'; // Importa el nuevo componente
 
 const bleManager = new BleManager();
 
@@ -266,42 +267,20 @@ export default function HomeScreen() {
     });
   };
 
-  return (
+return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-
+      headerImage={<Image source={require('@/assets/images/partial-react-logo.png')} style={styles.reactLogo} />}
+    >
+      {/* Reemplazamos el bloque antiguo por el nuevo componente */}
       {devices.some(d => d.device) && (
-        <ThemedView style={styles.stepContainer}>
-          <ThemedText type="subtitle">Enviar configuración WiFi</ThemedText>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Nombre de la red (SSID)"
-            placeholderTextColor="#666"
-            value={ssid}
-            onChangeText={setSsid}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Contraseña"
-            placeholderTextColor="#666"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-
-          <Button
-            title="Enviar Credenciales"
-            onPress={sendWiFiCredentials}
-          />
-        </ThemedView>
+        <WifiConfigForm 
+          ssid={ssid}
+          setSsid={setSsid}
+          password={password}
+          setPassword={setPassword}
+          onSend={sendWiFiCredentials}
+        />
       )}
 
       <ThemedView style={styles.stepContainer}>
