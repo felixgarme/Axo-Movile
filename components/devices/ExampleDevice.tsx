@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, TextInput, Switch, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Platform, StatusBar } from 'react-native';
+import { View, TextInput, TouchableOpacity, Alert, ActivityIndicator, StyleSheet, Platform, StatusBar } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,16 +34,23 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
   const [nuevaHora, setNuevaHora] = useState('');
   const [nuevaDuracion, setNuevaDuracion] = useState('');
 
+  // Solución: Copia profunda del estado para forzar el re-render en React
   const updateItinerario = (index: number, field: string, value: string) => {
-    const newData = { ...deviceData };
-    if (field === 'hora') {
-      newData.itinerario[index].hora = formatearHora(value);
-    } else if (field === 'duracion') {
-      newData.itinerario[index].duracion = formatearDuracion(value);
-    }
-    setDeviceData(newData);
+    setDeviceData((prevData: any) => {
+      const newItinerario = [...(prevData.itinerario || [])];
+      newItinerario[index] = { ...newItinerario[index] };
+      
+      if (field === 'hora') {
+        newItinerario[index].hora = formatearHora(value);
+      } else if (field === 'duracion') {
+        newItinerario[index].duracion = formatearDuracion(value);
+      }
+      
+      return { ...prevData, itinerario: newItinerario };
+    });
   };
 
+  // Solución: Copia profunda al eliminar para actualizar la UI correctamente
   const eliminarItinerario = (index: number) => {
     Alert.alert(
       "Eliminar Itinerario",
@@ -54,9 +61,12 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
           text: "Eliminar", 
           style: "destructive",
           onPress: async () => {
-            const newData = { ...deviceData };
-            newData.itinerario.splice(index, 1);
-            setDeviceData(newData);
+            setDeviceData((prevData: any) => {
+              const newItinerario = [...(prevData.itinerario || [])];
+              newItinerario.splice(index, 1);
+              return { ...prevData, itinerario: newItinerario };
+            });
+
             try {
               const formBody = encodeURIComponent("eliminar") + "=" + encodeURIComponent(index.toString());
               await fetch(`http://${ip}/data`, {
@@ -64,6 +74,7 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: formBody,
               });
+              onRefresh();
             } catch (error) {
               console.error(error);
             }
@@ -73,11 +84,29 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
     );
   };
 
+  // Solución: Función dedicada para manejar el pulsador y guardado automático
+  const handlePulsador = async (estado: boolean) => {
+    setDeviceData((prev: any) => ({ ...prev, activador: estado }));
+    
+    try {
+      let formBody = [];
+      if (deviceData.name) formBody.push(encodeURIComponent("name") + "=" + encodeURIComponent(deviceData.name));
+      formBody.push(encodeURIComponent("activador") + "=" + encodeURIComponent(estado ? "true" : "false"));
+      
+      await fetch(`http://${ip}/data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formBody.join("&"),
+      });
+    } catch (error) {
+      console.error('Error al guardar activador:', error);
+    }
+  };
+
   const saveDeviceData = async () => {
     setIsSaving(true);
     try {
       let formBody = [];
-      // Se envía 'name' en lugar de 'divice'
       if (deviceData.name) formBody.push(encodeURIComponent("name") + "=" + encodeURIComponent(deviceData.name));
       formBody.push(encodeURIComponent("activador") + "=" + encodeURIComponent(deviceData.activador ? "true" : "false"));
       
@@ -121,13 +150,20 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
       </ThemedView>
 
       <ThemedView style={styles.row}>
-        <ThemedText type="defaultSemiBold">Activador:</ThemedText>
-        <Switch 
-          value={deviceData.activador} 
-          onValueChange={(val) => setDeviceData({...deviceData, activador: val})}
-          trackColor={{ false: '#767577', true: '#81b0ff' }}
-          thumbColor={deviceData.activador ? '#0a7ea4' : '#f4f3f4'}
-        />
+        <ThemedText type="defaultSemiBold">Activador (Pulsador):</ThemedText>
+        <TouchableOpacity 
+          activeOpacity={0.7}
+          onPressIn={() => handlePulsador(true)}
+          onPressOut={() => handlePulsador(false)}
+          style={[
+            styles.pulsadorBtn, 
+            { backgroundColor: deviceData.activador ? '#0a7ea4' : '#e0e0e0' }
+          ]}
+        >
+          <ThemedText style={{ color: deviceData.activador ? '#fff' : '#333', fontWeight: 'bold' }}>
+            {deviceData.activador ? 'ON' : 'OFF'}
+          </ThemedText>
+        </TouchableOpacity>
       </ThemedView>
 
       <ThemedText type="subtitle" style={[styles.sectionTitle, { marginTop: 15 }]}>Itinerarios</ThemedText>
@@ -177,6 +213,9 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
       >
         {isSaving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveButtonText}>Guardar Cambios</ThemedText>}
       </TouchableOpacity>
+
+      {/* Solución: IP pequeña en la parte inferior izquierda */}
+      <ThemedText style={styles.ipSmallText}>IP: {ip}</ThemedText>
     </ThemedView>
   );
 };
@@ -227,10 +266,12 @@ const styles = StyleSheet.create({
   dataCard: {
     width: '100%',
     padding: 20,
+    paddingBottom: 35, /* Espacio para que la IP no se superponga con el botón */
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.02)',
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.1)',
+    position: 'relative',
   },
   sectionTitle: {
     marginBottom: 15,
@@ -252,6 +293,13 @@ const styles = StyleSheet.create({
     padding: 10,
     marginTop: 5,
     backgroundColor: 'rgba(255,255,255,0.8)',
+  },
+  pulsadorBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 25,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
   },
   itinerarioBox: {
     backgroundColor: 'rgba(0,0,0,0.04)',
@@ -286,5 +334,12 @@ const styles = StyleSheet.create({
     marginTop: 20,
     color: 'gray',
     textAlign: 'center',
+  },
+  ipSmallText: {
+    position: 'absolute',
+    bottom: 8,
+    left: 12,
+    fontSize: 10,
+    color: 'gray',
   }
 });
