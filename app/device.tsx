@@ -5,13 +5,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState, useEffect } from 'react';
 import { Alert, Platform, SafeAreaView, StatusBar, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
-import { ExampleDevice } from '@/components/devises/ExampleDevice';
+import { ExampleDevice } from '@/components/devices/ExampleDevice';
 
 const DeviceComponentsRegistry: Record<string, React.FC<any>> = {
   "example": ExampleDevice,
 };
 
-export default function DeviseScreen() {
+export default function DeviceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ ip: string; name: string }>();
   const [currentIp, setCurrentIp] = useState<string>(params.ip || 'Sin IP');
@@ -62,9 +62,9 @@ export default function DeviseScreen() {
   };
 
   const renderSpecificDeviceComponent = () => {
-    if (!deviceData || !deviceData.divice) return null;
+    if (!deviceData || !deviceData.device) return null;
     
-    const deviceKey = deviceData.divice.toLowerCase();
+    const deviceKey = deviceData.device.toLowerCase();
     const SpecificComponent = DeviceComponentsRegistry[deviceKey];
 
     if (SpecificComponent) {
@@ -80,7 +80,7 @@ export default function DeviseScreen() {
     return (
       <ThemedView style={styles.card}>
         <ThemedText style={{color: 'red'}}>
-          No existe una interfaz registrada para el dispositivo: "{deviceData.divice}"
+          No existe una interfaz registrada para el dispositivo: "{deviceData.device}"
         </ThemedText>
       </ThemedView>
     );
@@ -113,7 +113,7 @@ export default function DeviseScreen() {
         ) : deviceData ? (
           renderSpecificDeviceComponent()
         ) : (
-          <ThemedText style={styles.noDataText}>No hay datos cargados. Revisa la conexión.</ThemedText>
+          <ThemedText style={styles.noDataText}>No hay datos cargados. Conecta el dispositivo a una red wifi.</ThemedText>
         )}
       </ScrollView>
     </SafeAreaView>

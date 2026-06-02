@@ -1,20 +1,17 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet, Button, PermissionsAndroid, TextInput, Alert, TouchableOpacity, View } from 'react-native';
 import React, { useState, useEffect } from 'react';
+import { Platform, StyleSheet, PermissionsAndroid, Alert, TouchableOpacity, View } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 import { encode, decode } from 'base-64';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import * as Network from 'expo-network';
 
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import DeviceCard from '@/components/DeviceCard'; // Asegúrate de que la ruta coincida
-import WifiConfigForm from '@/components/WifiConfigForm'; // Importa el nuevo componente
+import DeviceCard from '@/components/DeviceCard';
+import WifiConfigForm from '@/components/WifiConfigForm';
 
 const bleManager = new BleManager();
-
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 
@@ -25,352 +22,296 @@ interface ESPDevice {
   ip: string;
 }
 
+const fetchWithTimeout = async (url: string, timeout = 2000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+};
+
 export default function HomeScreen() {
   const router = useRouter();
-  const [connectionStatus, setConnectionStatus] = useState<string>('Desconectado');
+  const [connectionStatus, setConnectionStatus] = useState('Desconectado');
   const [devices, setDevices] = useState<ESPDevice[]>([]);
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
 
-  useEffect(() => {
-    loadDevices();
+  const updateDev = (id: string, data: Partial<ESPDevice>) => 
+    setDevices(prev => prev.map(d => d.id === id ? { ...d, ...data } : d));
 
-    // Actualizar desde el JSON cada 2 segundos
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@devices_json');
+        if (stored) setDevices(JSON.parse(stored));
+      } catch (e) { console.error(e); }
+    })();
+
     const intervalId = setInterval(() => {
       syncDevicesFromJson();
-    }, 2000);
+      updateDeviceNamesFromNetwork();
+    }, 3000);
 
-    return () => {
-      clearInterval(intervalId); // Limpiar el intervalo al desmontar
-      bleManager.destroy();
-    };
+    return () => { clearInterval(intervalId); bleManager.destroy(); };
   }, []);
 
   useEffect(() => {
-    saveDevices(devices);
+    AsyncStorage.setItem('@devices_json', JSON.stringify(devices.map(({ id, name, ip }) => ({ id, name, ip }))))
+      .catch(console.error);
   }, [devices]);
 
-  const loadDevices = async () => {
-    try {
-      const storedDevices = await AsyncStorage.getItem('@devices_json');
-      if (storedDevices) {
-        setDevices(JSON.parse(storedDevices));
-      }
-    } catch (error) {
-      console.error('Error al cargar dispositivos', error);
-    }
-  };
-
-  // Función para sincronizar sin perder las conexiones Bluetooth activas
   const syncDevicesFromJson = async () => {
     try {
-      const storedDevicesStr = await AsyncStorage.getItem('@devices_json');
-      if (storedDevicesStr) {
-        const storedDevices: ESPDevice[] = JSON.parse(storedDevicesStr);
-
-        setDevices(prevDevices => {
-          // Comprobar si hay alguna diferencia real (como una eliminación desde otra pantalla)
-          const isDifferent =
-            prevDevices.length !== storedDevices.length ||
-            prevDevices.some(p => {
-              const s = storedDevices.find(sd => sd.id === p.id);
-              return !s || s.ip !== p.ip || s.name !== p.name;
-            });
-
-          // Si no hay cambios, devolvemos el mismo estado para evitar renderizados infinitos
-          if (!isDifferent) {
-            return prevDevices;
-          }
-
-          // Si hay cambios (ej. se borró un dispositivo), cruzamos los datos nuevos con los anteriores
-          // para NO perder la propiedad 'device' que contiene la conexión Bluetooth
-          return storedDevices.map(stored => {
-            const existing = prevDevices.find(d => d.id === stored.id);
-            return existing ? { ...stored, device: existing.device } : stored;
-          });
+      const storedStr = await AsyncStorage.getItem('@devices_json');
+      if (!storedStr) return;
+      const stored: ESPDevice[] = JSON.parse(storedStr);
+      
+      setDevices(prev => {
+        const isDiff = prev.length !== stored.length || prev.some(p => {
+          const s = stored.find(sd => sd.id === p.id);
+          return !s || s.ip !== p.ip || s.name !== p.name;
         });
-      }
-    } catch (error) {
-      console.error('Error sincronizando dispositivos', error);
-    }
+        return isDiff ? stored.map(s => ({ ...s, device: prev.find(d => d.id === s.id)?.device })) : prev;
+      });
+    } catch (e) { console.error(e); }
   };
 
-  const saveDevices = async (currentDevices: ESPDevice[]) => {
-    try {
-      const dataToSave = currentDevices.map(({ id, name, ip }) => ({ id, name, ip }));
-      await AsyncStorage.setItem('@devices_json', JSON.stringify(dataToSave));
-    } catch (error) {
-      console.error('Error al guardar dispositivos', error);
-    }
+  const updateDeviceNamesFromNetwork = () => {
+    setDevices(prev => {
+      prev.forEach(async (d) => {
+        if (!d.ip || d.ip.includes(' Esperando') || d.ip.includes('Error')) return;
+        try {
+          const res = await fetchWithTimeout(`http://${d.ip}/data`, 1500);
+          const dataJson = await res.json();
+          if (dataJson && dataJson.name && dataJson.name !== d.name) {
+            updateDev(d.id, { name: dataJson.name });
+          }
+        } catch {}
+      });
+      return prev;
+    });
   };
 
   const requestAndroidPermissions = async () => {
-    if (Platform.OS === 'android') {
-      const apiLevel = Platform.Version;
-      if (typeof apiLevel === 'number' && apiLevel < 31) {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        );
-        return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } else {
-        const result = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ]);
-        return (
-          result['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
-          result['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED
-        );
-      }
+    if (Platform.OS !== 'android') return true;
+    if ((Platform.Version as number) < 31) {
+      return (await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION)) === 'granted';
     }
-    return true;
+    const res = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    ]);
+    return res['android.permission.BLUETOOTH_CONNECT'] === 'granted' && res['android.permission.BLUETOOTH_SCAN'] === 'granted';
   };
 
-  const connectToDevice = (device: Device) => {
-    setConnectionStatus(`Conectando a ${device.name || device.id}...`);
-    device
-      .connect()
-      .then((connectedDevice) => connectedDevice.discoverAllServicesAndCharacteristics())
-      .then((readyDevice) => {
-        setDevices((prev) => {
-          const exists = prev.find(d => d.id === readyDevice.id);
-          if (exists) {
-            return prev.map(d => d.id === readyDevice.id ? { ...d, device: readyDevice } : d);
-          }
-          return [...prev, { id: readyDevice.id, name: readyDevice.name || 'Desconocido', device: readyDevice, ip: 'Esperando IP...' }];
-        });
-        setConnectionStatus(`Conectado a ${readyDevice.name || readyDevice.id}`);
+  const connectToDevice = async (device: Device): Promise<boolean> => {
+    try {
+      // Verificamos si ya existe una conexión "fantasma" o activa para no fallar
+      const isConnected = await device.isConnected();
+      let readyDevice = device;
 
-        readyDevice.monitorCharacteristicForService(
-          SERVICE_UUID,
-          CHARACTERISTIC_UUID,
-          (error, characteristic) => {
-            if (error) {
-              console.error('Error al monitorear:', error);
-              return;
-            }
-
-            if (characteristic?.value) {
-              const decodedMessage = decode(characteristic.value);
-
-              if (decodedMessage.startsWith('IP:')) {
-                // Si el mensaje es la IP
-                const ipOnly = decodedMessage.substring(3);
-                setDevices((prev) =>
-                  prev.map((d) =>
-                    d.id === readyDevice.id ? { ...d, ip: ipOnly } : d
-                  )
-                );
-                Alert.alert('Conexión exitosa', `El dispositivo se conectó al WiFi.\nIP: ${ipOnly}`);
-              } else if (decodedMessage === 'No se pudo conectar' || decodedMessage === 'ERROR:WIFI') {
-                // Nueva funcionalidad: Manejo de error de contraseña o conexión WiFi
-                setDevices((prev) =>
-                  prev.map((d) =>
-                    d.id === readyDevice.id ? { ...d, ip: 'Error de red' } : d
-                  )
-                );
-                Alert.alert('Error de conexión', 'No se pudo conectar al WiFi. Verifica que el nombre de la red y la contraseña sean correctos.');
-              } else {
-                // Si no empieza con IP ni es error, asumimos que es el modelo del dispositivo enviado al conectarse
-                setDevices((prev) =>
-                  prev.map((d) =>
-                    d.id === readyDevice.id ? { ...d, name: decodedMessage } : d
-                  )
-                );
-              }
-            }
-          }
-        );
-      })
-      .catch((error) => {
-        setConnectionStatus('Error al conectar');
-        console.error('Error de conexión:', error);
+      if (!isConnected) {
+        readyDevice = await device.connect();
+      }
+      
+      readyDevice = await readyDevice.discoverAllServicesAndCharacteristics();
+      
+      setDevices(prev => {
+        const exists = prev.find(d => d.id === readyDevice.id);
+        const newDev = { id: readyDevice.id, name: readyDevice.name || 'Desconocido', device: readyDevice, ip: 'Esperando IP...' };
+        return exists ? prev.map(d => d.id === readyDevice.id ? { ...d, device: readyDevice } : d) : [...prev, newDev];
       });
+
+      readyDevice.monitorCharacteristicForService(SERVICE_UUID, CHARACTERISTIC_UUID, async (err, char) => {
+        if (err || !char?.value) return;
+        const msg = decode(char.value);
+
+        if (msg.startsWith('IP:')) {
+          const ipOnly = msg.substring(3);
+          updateDev(readyDevice.id, { ip: ipOnly });
+          Alert.alert('Conexión exitosa', `IP: ${ipOnly}`);
+          
+          try {
+            const res = await fetch(`http://${ipOnly}/data`);
+            const data = await res.json();
+            if (data && data.name) updateDev(readyDevice.id, { name: data.name });
+          } catch {}
+        } else if (msg === 'No se pudo conectar' || msg === 'ERROR:WIFI') {
+          updateDev(readyDevice.id, { ip: 'Error de red' });
+          Alert.alert('Error de conexión', 'Verifica red y contraseña.');
+        } else {
+          updateDev(readyDevice.id, { name: msg });
+        }
+      });
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   };
 
-  const scanForNewDevice = async () => {
-    const hasPermissions = await requestAndroidPermissions();
-    if (!hasPermissions) {
-      setConnectionStatus('Faltan permisos');
-      return;
+  const checkDeviceOnIp = async (ip: string): Promise<ESPDevice | null> => {
+    try {
+      const response = await fetchWithTimeout(`http://${ip}/`, 600);
+      const text = await response.text();
+
+      if (text.includes('AXO')) {
+        const dataResponse = await fetchWithTimeout(`http://${ip}/data`, 2000);
+        const dataJson = await dataResponse.json();
+
+        const deviceName = dataJson.name || dataJson.device || 'Desconocido';
+        const deviceId = dataJson.device || ip;
+
+        return { id: deviceId, name: deviceName, ip: ip };
+      }
+    } catch (error) {
+    }
+    return null;
+  };
+
+  const scanWifiForDevices = async () => {
+    try {
+      const currentIp = await Network.getIpAddressAsync();
+      const subnet = currentIp.match(/^(\d+\.\d+\.\d+)\./)?.[1] || '192.168.1';
+      
+      let foundAny = false;
+      const BATCH_SIZE = 50;
+
+      for (let i = 1; i < 255; i += BATCH_SIZE) {
+        const promises = [];
+        
+        for (let j = 0; j < BATCH_SIZE && (i + j) < 255; j++) {
+          const targetIp = `${subnet}.${i + j}`;
+          if (targetIp !== currentIp) {
+            promises.push(checkDeviceOnIp(targetIp));
+          }
+        }
+
+        const results = await Promise.allSettled(promises);
+        
+        const batchFound = results
+          .filter((r): r is PromiseFulfilledResult<ESPDevice> => r.status === 'fulfilled' && r.value !== null)
+          .map(r => r.value);
+        
+        if (batchFound.length > 0) {
+          foundAny = true;
+          setDevices(prev => {
+            const newDevs = [...prev];
+            batchFound.forEach(fd => {
+              const existsIndex = newDevs.findIndex(d => d.id === fd.id || d.ip === fd.ip);
+              if (existsIndex >= 0) {
+                newDevs[existsIndex] = { ...newDevs[existsIndex], ip: fd.ip, name: fd.name };
+              } else {
+                newDevs.push(fd);
+              }
+            });
+            return newDevs;
+          });
+        }
+      }
+      
+      setConnectionStatus(prev => prev.includes('Bluetooth') ? prev : (foundAny ? 'Búsqueda WiFi completada.' : 'No se encontraron dispositivos WiFi'));
+    } catch (error) {
+    }
+  };
+
+  const startSimultaneousScan = async () => {
+    if (!(await requestAndroidPermissions())) return setConnectionStatus('Faltan permisos');
+    
+    setConnectionStatus('Buscando dispositivos (Bluetooth y WiFi)...');
+
+    // Detenemos cualquier escaneo que se haya quedado colgado
+    bleManager.stopDeviceScan();
+
+    // Recuperamos dispositivos que el OS ya tiene conectados para no depender solo del escaneo visual
+    try {
+      const connectedPeripherals = await bleManager.connectedDevices([SERVICE_UUID]);
+      if (connectedPeripherals.length > 0) {
+        for (const device of connectedPeripherals) {
+          await connectToDevice(device);
+        }
+      }
+    } catch (e) {
+      console.error("Error al buscar dispositivos conectados:", e);
     }
 
-    setConnectionStatus('Escaneando nuevo dispositivo...');
+    scanWifiForDevices();
 
-    // Filtramos por el SERVICE_UUID en lugar del nombre del dispositivo
-    bleManager.startDeviceScan([SERVICE_UUID], null, (error, device) => {
-      if (error) {
-        console.error("Error detallado:", error);
-        setConnectionStatus(`Error: ${error.message}`);
-        return;
-      }
+    const timeoutScan = setTimeout(() => {
+      bleManager.stopDeviceScan();
+      setConnectionStatus(prev => prev === 'Buscando dispositivos (Bluetooth y WiFi)...' ? 'Búsqueda finalizada' : prev);
+    }, 7000);
 
-      // Si detecta un dispositivo con nuestro UUID de servicio
+    bleManager.startDeviceScan([SERVICE_UUID], null, async (error, device) => {
+      if (error) { console.error(error); return; }
+
       if (device) {
+        clearTimeout(timeoutScan);
         bleManager.stopDeviceScan();
-        connectToDevice(device);
+        await connectToDevice(device);
+        setConnectionStatus(`Conectado a ${device.name || device.id} (Sondeo WiFi en segundo plano)`);
       }
     });
   };
 
   const sendWiFiCredentials = async () => {
     const connectedDevices = devices.filter(d => d.device);
-    if (connectedDevices.length === 0) {
-      Alert.alert('Error', 'Primero debes conectarte a por lo menos un dispositivo.');
-      return;
-    }
-    if (!ssid || !password) {
-      Alert.alert('Datos incompletos', 'Por favor ingresa el nombre de la red y la contraseña.');
-      return;
-    }
+    if (connectedDevices.length === 0) return Alert.alert('Error', 'Debes conectarte a por lo menos un dispositivo.');
+    if (!ssid || !password) return Alert.alert('Datos incompletos', 'Ingresa la red y contraseña.');
 
-    const payload = `${ssid},${password}`;
-    const base64Payload = encode(payload);
-
+    const base64Payload = encode(`${ssid},${password}`);
     let successCount = 0;
 
     for (const esp of connectedDevices) {
       try {
         if (esp.device) {
-          await esp.device.writeCharacteristicWithResponseForService(
-            SERVICE_UUID,
-            CHARACTERISTIC_UUID,
-            base64Payload
-          );
+          await esp.device.writeCharacteristicWithResponseForService(SERVICE_UUID, CHARACTERISTIC_UUID, base64Payload);
           successCount++;
         }
-      } catch (error) {
-        console.error('Error al enviar credenciales', error);
-      }
+      } catch (error) { console.error(error); }
     }
 
-    if (successCount > 0) {
-      Alert.alert('Éxito', `Credenciales enviadas a ${successCount} dispositivo(s). Esperando IPs...`);
-    } else {
-      Alert.alert('Error', 'No se pudieron enviar los datos a ningún dispositivo.');
-    }
+    Alert.alert(
+      successCount > 0 ? 'Éxito' : 'Error', 
+      successCount > 0 ? `Credenciales enviadas a ${successCount} dispositivo(s).` : 'No se pudieron enviar los datos.'
+    );
   };
 
-  const deleteDevice = (id: string) => {
-    setDevices((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  // Se modificó esta función para recibir también el nombre
-  const navigateToDevise = (ipAddress: string, deviceName: string | null) => {
-    router.push({
-      pathname: '/devise',
-      params: { 
-        ip: ipAddress,
-        name: deviceName || 'Desconocido' // Pasamos el nombre como parámetro
-      }
-    });
-  };
-
-return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={<Image source={require('@/assets/images/partial-react-logo.png')} style={styles.reactLogo} />}
-    >
-      {/* Reemplazamos el bloque antiguo por el nuevo componente */}
+  return (
+    <ThemedView style={styles.mainContainer}>
       {devices.some(d => d.device) && (
-        <WifiConfigForm 
-          ssid={ssid}
-          setSsid={setSsid}
-          password={password}
-          setPassword={setPassword}
-          onSend={sendWiFiCredentials}
-        />
+        <WifiConfigForm ssid={ssid} setSsid={setSsid} password={password} setPassword={setPassword} onSend={sendWiFiCredentials} />
       )}
 
       <ThemedView style={styles.stepContainer}>
         <View style={styles.headerRow}>
           <ThemedText type="subtitle">Tus Dispositivos</ThemedText>
-          <TouchableOpacity style={styles.addButton} onPress={scanForNewDevice}>
+          <TouchableOpacity style={styles.addButton} onPress={startSimultaneousScan}>
             <ThemedText style={styles.addButtonText}>+</ThemedText>
           </TouchableOpacity>
         </View>
 
-        <ThemedText>
-          Estado actual: <ThemedText type="defaultSemiBold">{connectionStatus}</ThemedText>
-        </ThemedText>
+        <ThemedText>Estado actual: <ThemedText type="defaultSemiBold">{connectionStatus}</ThemedText></ThemedText>
 
-        {/* Aquí renderizamos nuestro nuevo componente */}
         {devices.map((esp) => (
-          <DeviceCard
-            key={esp.id}
-            esp={esp}
-            // Actualizamos onPressSettings para pasar tanto la IP (que suele devolver el card) como el nombre
-            onPressSettings={(ipAddress) => navigateToDevise(ipAddress, esp.name)}
-          />
+          <DeviceCard key={esp.id} esp={esp} onPressSettings={(ipAddress) => router.push({ pathname: '/device', params: { ip: ipAddress, name: esp.name || 'Desconocido' } })} />
         ))}
       </ThemedView>
-    </ParallaxScrollView>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-    paddingVertical: 10,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  addButton: {
-    backgroundColor: '#0a7ea4',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: '#ffffff',
-    fontSize: 24,
-    fontWeight: 'bold',
-    lineHeight: 28,
-  },
-  deviceCard: {
-    padding: 12,
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    borderRadius: 8,
-    marginVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.1)',
-  },
-  deviceInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  iconContainer: {
-    paddingLeft: 10, // Cambiado de paddingRight a paddingLeft para dar espacio a la izquierda
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deviceDetails: {
-    flex: 1,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-  input: {
-    height: 50,
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    marginBottom: 10,
-    backgroundColor: '#f9f9f9',
-    color: '#333',
-  },
+  mainContainer: { flex: 1, paddingHorizontal: 16, paddingTop: 40 },
+  stepContainer: { gap: 8, marginBottom: 8, paddingVertical: 10 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  addButton: { backgroundColor: '#0a7ea4', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  addButtonText: { color: '#ffffff', fontSize: 24, fontWeight: 'bold', lineHeight: 28 },
 });
