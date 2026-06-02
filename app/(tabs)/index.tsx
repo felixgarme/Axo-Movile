@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Platform, StyleSheet, PermissionsAndroid, Alert, TouchableOpacity, View } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 import { encode, decode } from 'base-64';
@@ -20,6 +20,7 @@ interface ESPDevice {
   name: string | null;
   device?: Device;
   ip: string;
+  status?: string; // <--- Nuevo campo para manejar el estado de conexión
 }
 
 const fetchWithTimeout = async (url: string, timeout = 2000) => {
@@ -41,6 +42,9 @@ export default function HomeScreen() {
   const [devices, setDevices] = useState<ESPDevice[]>([]);
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
+  
+  // Referencia para saber si estamos en medio de un escaneo de red
+  const isScanningNetworkRef = useRef(false);
 
   const updateDev = (id: string, data: Partial<ESPDevice>) => 
     setDevices(prev => prev.map(d => d.id === id ? { ...d, ...data } : d));
@@ -56,13 +60,15 @@ export default function HomeScreen() {
     const intervalId = setInterval(() => {
       syncDevicesFromJson();
       updateDeviceNamesFromNetwork();
+      checkDeviceConnections(); // <--- Nueva comprobación añadida
     }, 3000);
 
     return () => { clearInterval(intervalId); bleManager.destroy(); };
   }, []);
 
   useEffect(() => {
-    AsyncStorage.setItem('@devices_json', JSON.stringify(devices.map(({ id, name, ip }) => ({ id, name, ip }))))
+    // Actualizado para guardar también el status
+    AsyncStorage.setItem('@devices_json', JSON.stringify(devices.map(({ id, name, ip, status }) => ({ id, name, ip, status }))))
       .catch(console.error);
   }, [devices]);
 
@@ -75,7 +81,7 @@ export default function HomeScreen() {
       setDevices(prev => {
         const isDiff = prev.length !== stored.length || prev.some(p => {
           const s = stored.find(sd => sd.id === p.id);
-          return !s || s.ip !== p.ip || s.name !== p.name;
+          return !s || s.ip !== p.ip || s.name !== p.name || s.status !== p.status;
         });
         return isDiff ? stored.map(s => ({ ...s, device: prev.find(d => d.id === s.id)?.device })) : prev;
       });
@@ -98,6 +104,31 @@ export default function HomeScreen() {
     });
   };
 
+  // NUEVA FUNCIÓN: Comprueba cada dispositivo para ver si responde con "AXO"
+  const checkDeviceConnections = () => {
+    if (isScanningNetworkRef.current) return;
+
+    setDevices(prev => {
+      prev.forEach(async (d) => {
+        if (!d.ip || d.ip.includes('Esperando') || d.ip.includes('Error')) return;
+        
+        try {
+          const res = await fetchWithTimeout(`http://${d.ip}/`, 1500);
+          const text = await res.text();
+          
+          if (text.includes('AXO')) {
+            if (d.status !== 'Conectado') updateDev(d.id, { status: 'Conectado' });
+          } else {
+            if (d.status !== 'Desconectado') updateDev(d.id, { status: 'Desconectado' });
+          }
+        } catch {
+          if (d.status !== 'Desconectado') updateDev(d.id, { status: 'Desconectado' });
+        }
+      });
+      return prev;
+    });
+  };
+
   const requestAndroidPermissions = async () => {
     if (Platform.OS !== 'android') return true;
     if ((Platform.Version as number) < 31) {
@@ -113,7 +144,6 @@ export default function HomeScreen() {
 
   const connectToDevice = async (device: Device): Promise<boolean> => {
     try {
-      // Verificamos si ya existe una conexión "fantasma" o activa para no fallar
       const isConnected = await device.isConnected();
       let readyDevice = device;
 
@@ -135,7 +165,7 @@ export default function HomeScreen() {
 
         if (msg.startsWith('IP:')) {
           const ipOnly = msg.substring(3);
-          updateDev(readyDevice.id, { ip: ipOnly });
+          updateDev(readyDevice.id, { ip: ipOnly, status: 'Conectado' }); // Actualizamos el estado al conectar
           Alert.alert('Conexión exitosa', `IP: ${ipOnly}`);
           
           try {
@@ -144,7 +174,7 @@ export default function HomeScreen() {
             if (data && data.name) updateDev(readyDevice.id, { name: data.name });
           } catch {}
         } else if (msg === 'No se pudo conectar' || msg === 'ERROR:WIFI') {
-          updateDev(readyDevice.id, { ip: 'Error de red' });
+          updateDev(readyDevice.id, { ip: 'Error de red', status: 'Desconectado' });
           Alert.alert('Error de conexión', 'Verifica red y contraseña.');
         } else {
           updateDev(readyDevice.id, { name: msg });
@@ -169,7 +199,7 @@ export default function HomeScreen() {
         const deviceName = dataJson.name || dataJson.device || 'Desconocido';
         const deviceId = dataJson.device || ip;
 
-        return { id: deviceId, name: deviceName, ip: ip };
+        return { id: deviceId, name: deviceName, ip: ip, status: 'Conectado' };
       }
     } catch (error) {
     }
@@ -177,6 +207,8 @@ export default function HomeScreen() {
   };
 
   const scanWifiForDevices = async () => {
+    isScanningNetworkRef.current = true; // Iniciamos bandera de escaneo
+
     try {
       const currentIp = await Network.getIpAddressAsync();
       const subnet = currentIp.match(/^(\d+\.\d+\.\d+)\./)?.[1] || '192.168.1';
@@ -207,7 +239,7 @@ export default function HomeScreen() {
             batchFound.forEach(fd => {
               const existsIndex = newDevs.findIndex(d => d.id === fd.id || d.ip === fd.ip);
               if (existsIndex >= 0) {
-                newDevs[existsIndex] = { ...newDevs[existsIndex], ip: fd.ip, name: fd.name };
+                newDevs[existsIndex] = { ...newDevs[existsIndex], ip: fd.ip, name: fd.name, status: 'Conectado' };
               } else {
                 newDevs.push(fd);
               }
@@ -219,6 +251,8 @@ export default function HomeScreen() {
       
       setConnectionStatus(prev => prev.includes('Bluetooth') ? prev : (foundAny ? 'Búsqueda WiFi completada.' : 'No se encontraron dispositivos WiFi'));
     } catch (error) {
+    } finally {
+      isScanningNetworkRef.current = false; // Finalizamos bandera de escaneo
     }
   };
 
@@ -227,10 +261,8 @@ export default function HomeScreen() {
     
     setConnectionStatus('Buscando dispositivos (Bluetooth y WiFi)...');
 
-    // Detenemos cualquier escaneo que se haya quedado colgado
     bleManager.stopDeviceScan();
 
-    // Recuperamos dispositivos que el OS ya tiene conectados para no depender solo del escaneo visual
     try {
       const connectedPeripherals = await bleManager.connectedDevices([SERVICE_UUID]);
       if (connectedPeripherals.length > 0) {

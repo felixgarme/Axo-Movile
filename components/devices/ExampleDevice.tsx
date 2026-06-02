@@ -34,7 +34,6 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
   const [nuevaHora, setNuevaHora] = useState('');
   const [nuevaDuracion, setNuevaDuracion] = useState('');
 
-  // Solución: Copia profunda del estado para forzar el re-render en React
   const updateItinerario = (index: number, field: string, value: string) => {
     setDeviceData((prevData: any) => {
       const newItinerario = [...(prevData.itinerario || [])];
@@ -50,7 +49,30 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
     });
   };
 
-  // Solución: Copia profunda al eliminar para actualizar la UI correctamente
+  const guardarEdicionItinerario = async (index: number, hora: string, duracion: string) => {
+    try {
+      let formBody = [];
+      formBody.push(encodeURIComponent("editar") + "=" + encodeURIComponent(index.toString()));
+      formBody.push(encodeURIComponent("hora") + "=" + encodeURIComponent(hora));
+      formBody.push(encodeURIComponent("duracion") + "=" + encodeURIComponent(duracion));
+      
+      const response = await fetch(`http://${ip}/data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formBody.join("&"),
+      });
+
+      if (response.ok) {
+        Alert.alert('Éxito', 'Itinerario modificado correctamente.');
+        onRefresh();
+      } else {
+        throw new Error('Error en el servidor');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo modificar el itinerario.');
+    }
+  };
+
   const eliminarItinerario = (index: number) => {
     Alert.alert(
       "Eliminar Itinerario",
@@ -84,7 +106,6 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
     );
   };
 
-  // Solución: Función dedicada para manejar el pulsador y guardado automático
   const handlePulsador = async (estado: boolean) => {
     setDeviceData((prev: any) => ({ ...prev, activador: estado }));
     
@@ -169,9 +190,14 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
       <ThemedText type="subtitle" style={[styles.sectionTitle, { marginTop: 15 }]}>Itinerarios</ThemedText>
       {deviceData.itinerario && deviceData.itinerario.map((item: any, index: number) => (
         <ThemedView key={index} style={styles.itinerarioBox}>
-          <TouchableOpacity style={styles.deleteButton} onPress={() => eliminarItinerario(index)}>
-            <Ionicons name="trash-outline" size={22} color="#ff4444" />
-          </TouchableOpacity>
+          <ThemedView style={styles.actionsContainer}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => guardarEdicionItinerario(index, item.hora, item.duracion)}>
+              <Ionicons name="save-outline" size={22} color="#0a7ea4" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={() => eliminarItinerario(index)}>
+              <Ionicons name="trash-outline" size={22} color="#ff4444" />
+            </TouchableOpacity>
+          </ThemedView>
           <ThemedView style={styles.inputContainer}>
             <ThemedText type="default">Hora (HH:MM):</ThemedText>
             <TextInput 
@@ -214,7 +240,6 @@ export const ExampleDevice = ({ ip, initialData, onRefresh }: { ip: string, init
         {isSaving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.saveButtonText}>Guardar Cambios</ThemedText>}
       </TouchableOpacity>
 
-      {/* Solución: IP pequeña en la parte inferior izquierda */}
       <ThemedText style={styles.ipSmallText}>IP: {ip}</ThemedText>
     </ThemedView>
   );
@@ -266,7 +291,7 @@ const styles = StyleSheet.create({
   dataCard: {
     width: '100%',
     padding: 20,
-    paddingBottom: 35, /* Espacio para que la IP no se superponga con el botón */
+    paddingBottom: 35,
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.02)',
     borderWidth: 1,
@@ -308,12 +333,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     position: 'relative',
   },
-  deleteButton: {
+  actionsContainer: {
     position: 'absolute',
     top: 10,
     right: 10,
     zIndex: 10,
+    flexDirection: 'row',
+  },
+  actionButton: {
     padding: 5,
+    marginLeft: 5,
   },
   saveButton: {
     backgroundColor: '#0a7ea4',
