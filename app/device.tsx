@@ -4,11 +4,15 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState, useEffect } from 'react';
-import { Alert, Platform, SafeAreaView, StatusBar, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { Alert, Platform, StatusBar, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+// ✅ Importación corregida para eliminar el WARN
+import { SafeAreaView } from 'react-native-safe-area-context'; 
 import { ExampleDevice } from '@/components/devices/ExampleDevice';
+import { PantallaDevice } from '@/components/devices/PantallaDevice';
 
 const DeviceComponentsRegistry: Record<string, React.FC<any>> = {
   "example": ExampleDevice,
+  "pantalla": PantallaDevice,
 };
 
 export default function DeviceScreen() {
@@ -123,7 +127,8 @@ export default function DeviceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    // Note: Se removió el cálculo manual de 'paddingTop' con 'StatusBar.currentHeight' 
+    // porque la nueva SafeAreaView gestiona la barra de estado de Android nativamente de forma perfecta.
   },
   header: {
     flexDirection: 'row',

@@ -20,7 +20,7 @@ interface ESPDevice {
   name: string | null;
   device?: Device;
   ip: string;
-  status?: string; // <--- Nuevo campo para manejar el estado de conexión
+  status?: string;
 }
 
 const fetchWithTimeout = async (url: string, timeout = 2000) => {
