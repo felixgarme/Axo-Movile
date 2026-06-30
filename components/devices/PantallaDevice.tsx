@@ -7,14 +7,15 @@ import {
   ActivityIndicator, 
   StyleSheet,
   ScrollView,
-  RefreshControl
+  RefreshControl,
+  Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Ionicons } from '@expo/vector-icons';
-import * as DocumentPicker from 'expo-document-picker';
+import { SubirImagen } from '@/components/SubirImagen';
 
 const formatearVelocidad = (texto: string) => {
   const numeros = texto.replace(/\D/g, '');
@@ -30,6 +31,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mostrarModal, setMostrarModal] = useState(false);
 
   useEffect(() => {
     setDeviceData(initialData);
@@ -38,7 +40,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
   useEffect(() => {
     const intervalo = setInterval(() => {
       onRefresh();
-    }, 10000);
+    }, 150000);
 
     return () => clearInterval(intervalo);
   }, [onRefresh]);
@@ -101,51 +103,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
     }
   };
 
-  const subirImagenPNG = async () => {
-    try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['image/png'],
-        copyToCacheDirectory: true,
-      });
-
-      if (res.canceled) return;
-      const file = res.assets[0];
-
-      if (!file.name.toLowerCase().endsWith('.png')) {
-        Alert.alert('Formato incorrecto', 'El dispositivo AXO solo admite imágenes .png');
-        return;
-      }
-
-      setIsUploading(true);
-      const formData = new FormData();
-      
-      formData.append('diapositiva', {
-        uri: file.uri,
-        name: file.name,
-        type: file.mimeType || 'image/png',
-      } as any);
-
-      const response = await fetch(`http://${ip}/subir`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.ok) {
-        Alert.alert('Completado', 'Diapositiva subida correctamente a la memoria.');
-        onRefresh();
-      } else {
-        throw new Error('Error al guardar en SPIFFS');
-      }
-    } catch (err) {
-      Alert.alert('Error', 'Ocurrió un problema durante la transmisión del archivo.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   const formatearMemoria = () => {
     Alert.alert(
       "⚠️ Formatear Almacenamiento",
@@ -189,7 +146,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
         }
       >
         <ThemedView style={styles.dataCard}>
-          <ThemedText type="subtitle" style={styles.sectionTitle}>Pantalla AXO Slideshow</ThemedText>
           
           <ThemedView style={styles.statusBox}>
             <View style={styles.statusRow}>
@@ -278,7 +234,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
 
           <TouchableOpacity 
             style={[styles.uploadButton, isUploading && styles.disabledBtn]} 
-            onPress={subirImagenPNG} disabled={isUploading}
+            onPress={() => setMostrarModal(true)} disabled={isUploading}
           >
             {isUploading ? (
               <ActivityIndicator color="#fff" />
@@ -298,6 +254,22 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
           <ThemedText style={styles.ipSmallText}>IP: {ip}</ThemedText>
         </ThemedView>
       </ScrollView>
+
+      <Modal
+        visible={mostrarModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setMostrarModal(false)}
+      >
+        <SubirImagen 
+          ip={ip} 
+          onClose={() => setMostrarModal(false)} 
+          onSuccess={() => {
+            setMostrarModal(false);
+            onRefresh();
+          }}
+        />
+      </Modal>
     </SafeAreaView>
   );
 };

@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, TextInput, Button } from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, TextInput, Button, View, TouchableOpacity, Text } from 'react-native';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 
@@ -12,6 +12,8 @@ interface WifiConfigFormProps {
 }
 
 export default function WifiConfigForm({ ssid, setSsid, password, setPassword, onSend }: WifiConfigFormProps) {
+  const [showPassword, setShowPassword] = useState(false);
+
   return (
     <ThemedView style={styles.stepContainer}>
       <ThemedText type="subtitle">Enviar configuración WiFi</ThemedText>
@@ -22,16 +24,26 @@ export default function WifiConfigForm({ ssid, setSsid, password, setPassword, o
         placeholderTextColor="#666"
         value={ssid}
         onChangeText={setSsid}
+        autoCapitalize="none"
       />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Contraseña"
-        placeholderTextColor="#666"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
+      <View style={styles.passwordContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Contraseña"
+          placeholderTextColor="#666"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry={!showPassword}
+          autoCapitalize="none"
+        />
+        <TouchableOpacity 
+          style={styles.eyeIcon} 
+          onPress={() => setShowPassword(!showPassword)}
+        >
+          <Text style={styles.eyeIconText}>{showPassword ? 'Ocultar' : 'Ver'}</Text>
+        </TouchableOpacity>
+      </View>
 
       <Button title="Enviar Credenciales" onPress={onSend} />
     </ThemedView>
@@ -54,4 +66,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9f9f9',
     color: '#333',
   },
+  passwordContainer: {
+    position: 'relative',
+  },
+  eyeIcon: {
+    position: 'absolute',
+    right: 15,
+    top: 15,
+    zIndex: 1,
+    elevation: 1,
+  },
+  eyeIconText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: 'bold',
+  }
 });
