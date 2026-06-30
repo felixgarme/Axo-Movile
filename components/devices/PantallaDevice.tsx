@@ -9,7 +9,6 @@ import {
   ScrollView,
   RefreshControl
 } from 'react-native';
-// ✅ Importación correcta que soluciona el warning
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 
 import { ThemedText } from '@/components/themed-text';
@@ -32,28 +31,24 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
   const [isUploading, setIsUploading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Actualizar los datos locales si cambian desde el componente padre
   useEffect(() => {
     setDeviceData(initialData);
   }, [initialData]);
 
-  // RECARGA AUTOMÁTICA CADA 5 SEGUNDOS
   useEffect(() => {
     const intervalo = setInterval(() => {
       onRefresh();
-    }, 5000);
+    }, 10000);
 
     return () => clearInterval(intervalo);
   }, [onRefresh]);
 
-  // FUNCIÓN PARA EL DESLIZAR HACIA ARRIBA (PULL TO REFRESH)
   const handlePullToRefresh = async () => {
     setIsRefreshing(true);
     await onRefresh();
     setIsRefreshing(false);
   };
 
-  // CAMBIO RÁPIDO DE ESTADO (ON / OFF)
   const handleToggleReproductor = async (nuevoEstado: boolean) => {
     setDeviceData((prev: any) => ({ ...prev, activador: nuevoEstado }));
 
@@ -71,14 +66,13 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
       });
 
       if (!response.ok) throw new Error('Respuesta del servidor fallida');
+      onRefresh();
     } catch (error) {
-      console.error('Error al cambiar activador:', error);
       Alert.alert('Error', 'No se pudo enviar la orden de encendido/apagado.');
       setDeviceData((prev: any) => ({ ...prev, activador: !nuevoEstado }));
     }
   };
 
-  // GUARDAR AJUSTES GENERALES
   const saveGeneralSettings = async () => {
     setIsSaving(true);
     try {
@@ -107,7 +101,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
     }
   };
 
-  // SUBIR ARCHIVO PNG AL SPIFFS
   const subirImagenPNG = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({
@@ -153,7 +146,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
     }
   };
 
-  // BORRAR MEMORIA SPIFFS
   const formatearMemoria = () => {
     Alert.alert(
       "⚠️ Formatear Almacenamiento",
@@ -199,11 +191,12 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
         <ThemedView style={styles.dataCard}>
           <ThemedText type="subtitle" style={styles.sectionTitle}>Pantalla AXO Slideshow</ThemedText>
           
-          {/* MONITOREO DE SISTEMA */}
           <ThemedView style={styles.statusBox}>
             <View style={styles.statusRow}>
               <ThemedText style={styles.statusLabel}>Reloj interno:</ThemedText>
-              <ThemedText type="defaultSemiBold">{deviceData.reloj || "--:--:--"}</ThemedText>
+              <ThemedText type="defaultSemiBold">
+                {deviceData.reloj ? deviceData.reloj.split(':').slice(0, 2).join(':') : "--:--"}
+              </ThemedText>
             </View>
 
             <View style={[styles.statusRow, { marginTop: 8 }]}>
@@ -224,17 +217,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             </View>
           </ThemedView>
 
-          {/* FORMULARIO DE PARAMETROS */}
-          <ThemedView style={styles.inputContainer}>
-            <ThemedText type="defaultSemiBold">Código Device:</ThemedText>
-            <TextInput 
-              style={styles.input}
-              value={deviceData.device}
-              onChangeText={(t) => setDeviceData({...deviceData, device: t})}
-              placeholder="Ej: AXO-001"
-            />
-          </ThemedView>
-
           <ThemedView style={styles.inputContainer}>
             <ThemedText type="defaultSemiBold">Nombre asignado:</ThemedText>
             <TextInput 
@@ -244,8 +226,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             />
           </ThemedView>
 
-          <ThemedView style={styles.row}>
-            <ThemedText type="defaultSemiBold">Estado de Reproducción:</ThemedText>
+          <ThemedView style={styles.centeredRow}>
             <TouchableOpacity 
               activeOpacity={0.8}
               onPress={() => handleToggleReproductor(!deviceData.activador)}
@@ -278,7 +259,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             {isSaving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.btnText}>Aplicar Ajustes Generales</ThemedText>}
           </TouchableOpacity>
 
-          {/* LISTADO DE DIAPOSITIVAS */}
           <ThemedText type="subtitle" style={[styles.sectionTitle, { marginTop: 25 }]}>
             Diapositivas en memoria ({deviceData.diapositivas?.length || 0})
           </ThemedText>
@@ -310,7 +290,6 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             )}
           </TouchableOpacity>
 
-          {/* ZONA DE PELIGRO */}
           <TouchableOpacity style={styles.dangerButton} onPress={formatearMemoria}>
             <Ionicons name="trash" size={18} color="#fff" style={{marginRight: 6}} />
             <ThemedText style={styles.btnText}>FORMATEAR TODAS LAS IMÁGENES</ThemedText>
@@ -325,7 +304,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
 
 const styles = StyleSheet.create({
   safeAreaContainer: {
-    flex: 1, // Asegura que el SafeAreaView ocupe todo el espacio disponible
+    flex: 1,
   },
   scrollContainer: {
     flexGrow: 1,
@@ -347,7 +326,7 @@ const styles = StyleSheet.create({
   statusLabel: { fontSize: 13, opacity: 0.7 },
   progressBg: { width: '100%', height: 8, backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 4, marginTop: 8, overflow: 'hidden' },
   progressBar: { height: '100%' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  centeredRow: { alignItems: 'center', marginBottom: 15 },
   inputContainer: { marginBottom: 15 },
   input: { borderWidth: 1, borderColor: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: 10, marginTop: 5, backgroundColor: 'rgba(255,255,255,0.8)' },
   switchBtn: { paddingVertical: 10, paddingHorizontal: 15, borderRadius: 8 },
