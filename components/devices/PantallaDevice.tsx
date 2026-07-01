@@ -8,7 +8,8 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
-  Modal
+  Modal,
+  Image
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 
@@ -24,6 +25,33 @@ const formatearVelocidad = (texto: string) => {
   if (num > 300) return '300';
   if (num < 1) return '1';
   return numeros;
+};
+
+// Subcomponente para manejar de forma segura la carga de cada imagen
+const Miniatura = ({ ip, nombreArchivo }: { ip: string, nombreArchivo: string }) => {
+  const [errorCarga, setErrorCarga] = useState(false);
+
+  const uriImagen = `http://${ip}/${nombreArchivo}`;
+
+  return (
+    <View style={styles.thumbItem}>
+      {!errorCarga ? (
+        <Image 
+          source={{ uri: uriImagen }} 
+          style={styles.thumbImage} 
+          resizeMode="cover"
+          onError={() => setErrorCarga(true)} // Si falla al cargar, evitamos que la app colapse
+        />
+      ) : (
+        <View style={[styles.thumbImage, styles.errorThumb]}>
+          <Ionicons name="image-outline" size={24} color="#0a7ea4" opacity={0.5} />
+          <ThemedText style={styles.errorThumbText} numberOfLines={1} ellipsizeMode="middle">
+            {nombreArchivo}
+          </ThemedText>
+        </View>
+      )}
+    </View>
+  );
 };
 
 export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, initialData: any, onRefresh: () => void }) => {
@@ -133,7 +161,7 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
   const barraPeligro = porcentajeAlmacenamiento > 85;
 
   return (
-    <SafeAreaView style={styles.safeAreaContainer}>
+    <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.safeAreaContainer}>
       <ScrollView 
         contentContainerStyle={styles.scrollContainer}
         refreshControl={
@@ -173,8 +201,25 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             </View>
           </ThemedView>
 
+          <TouchableOpacity 
+            activeOpacity={0.8}
+            onPress={() => handleToggleReproductor(!deviceData.activador)}
+            style={[
+              styles.switchBtn, 
+              { backgroundColor: deviceData.activador ? '#28a745' : '#6c757d' }
+            ]}
+          >
+            <ThemedText style={{ color: '#fff', fontWeight: 'bold', textAlign: 'center', fontSize: 16 }}>
+              {deviceData.activador ? '▶ EN REPRODUCCIÓN' : '⏸ DETENIDO'}
+            </ThemedText>
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          <ThemedText type="subtitle" style={styles.sectionTitle}>Ajustes del Dispositivo</ThemedText>
+          
           <ThemedView style={styles.inputContainer}>
-            <ThemedText type="defaultSemiBold">Nombre asignado:</ThemedText>
+            <ThemedText style={styles.inputLabel}>Nombre asignado:</ThemedText>
             <TextInput 
               style={styles.input}
               value={deviceData.name}
@@ -182,23 +227,8 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             />
           </ThemedView>
 
-          <ThemedView style={styles.centeredRow}>
-            <TouchableOpacity 
-              activeOpacity={0.8}
-              onPress={() => handleToggleReproductor(!deviceData.activador)}
-              style={[
-                styles.switchBtn, 
-                { backgroundColor: deviceData.activador ? '#28a745' : '#6c757d' }
-              ]}
-            >
-              <ThemedText style={{ color: '#fff', fontWeight: 'bold' }}>
-                {deviceData.activador ? '▶ EN REPRODUCCIÓN' : '⏸ DETENIDO'}
-              </ThemedText>
-            </TouchableOpacity>
-          </ThemedView>
-
           <ThemedView style={styles.inputContainer}>
-            <ThemedText type="defaultSemiBold">Velocidad de transición (1 a 300 seg):</ThemedText>
+            <ThemedText style={styles.inputLabel}>Velocidad de transición (1 a 300 seg):</ThemedText>
             <TextInput 
               style={styles.input}
               keyboardType="numeric"
@@ -215,41 +245,49 @@ export const PantallaDevice = ({ ip, initialData, onRefresh }: { ip: string, ini
             {isSaving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.btnText}>Aplicar Ajustes Generales</ThemedText>}
           </TouchableOpacity>
 
-          <ThemedText type="subtitle" style={[styles.sectionTitle, { marginTop: 25 }]}>
+          <View style={styles.divider} />
+
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
             Diapositivas en memoria ({deviceData.diapositivas?.length || 0})
           </ThemedText>
 
-          <View style={styles.slidesContainer}>
+          {/* Contenedor del Scroll Horizontal con miniaturas seguras */}
+          <View style={styles.slidesListContainer}>
             {deviceData.diapositivas && deviceData.diapositivas.length > 0 ? (
-              deviceData.diapositivas.map((png: string, index: number) => (
-                <ThemedView key={index} style={styles.slideItem}>
-                  <Ionicons name="image-outline" size={18} color="#0a7ea4" />
-                  <ThemedText style={styles.slideName} numberOfLines={1}>{png}</ThemedText>
-                </ThemedView>
-              ))
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={true} 
+                contentContainerStyle={styles.horizontalScrollContent}
+              >
+                {deviceData.diapositivas.map((png: string, index: number) => (
+                  <Miniatura key={index} ip={ip} nombreArchivo={png} />
+                ))}
+              </ScrollView>
             ) : (
               <ThemedText style={styles.emptyText}>No hay imágenes .png guardadas</ThemedText>
             )}
           </View>
 
-          <TouchableOpacity 
-            style={[styles.uploadButton, isUploading && styles.disabledBtn]} 
-            onPress={() => setMostrarModal(true)} disabled={isUploading}
-          >
-            {isUploading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="cloud-upload-outline" size={20} color="#fff" style={{marginRight: 8}}/>
-                <ThemedText style={styles.btnText}>Subir Diapositiva (.png)</ThemedText>
-              </>
-            )}
-          </TouchableOpacity>
+          <View style={styles.fileActionsContainer}>
+            <TouchableOpacity 
+              style={[styles.uploadButton, isUploading && styles.disabledBtn]} 
+              onPress={() => setMostrarModal(true)} disabled={isUploading}
+            >
+              {isUploading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="cloud-upload-outline" size={20} color="#fff" style={{marginRight: 8}}/>
+                  <ThemedText style={styles.btnText}>Subir Diapositiva (.png)</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
 
-          <TouchableOpacity style={styles.dangerButton} onPress={formatearMemoria}>
-            <Ionicons name="trash" size={18} color="#fff" style={{marginRight: 6}} />
-            <ThemedText style={styles.btnText}>FORMATEAR TODAS LAS IMÁGENES</ThemedText>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.dangerButton} onPress={formatearMemoria}>
+              <Ionicons name="trash" size={18} color="#fff" style={{marginRight: 6}} />
+              <ThemedText style={styles.btnText}>Formatear Memoria</ThemedText>
+            </TouchableOpacity>
+          </View>
 
           <ThemedText style={styles.ipSmallText}>IP: {ip}</ThemedText>
         </ThemedView>
@@ -284,32 +322,141 @@ const styles = StyleSheet.create({
   },
   dataCard: {
     width: '100%',
-    padding: 20,
-    paddingBottom: 35,
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    paddingBottom: 40,
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.02)',
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.1)',
     position: 'relative',
+    minHeight: '100%',
   },
-  sectionTitle: { marginBottom: 15, textAlign: 'center' },
-  statusBox: { backgroundColor: 'rgba(0,0,0,0.04)', padding: 12, borderRadius: 8, marginBottom: 18 },
-  statusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statusLabel: { fontSize: 13, opacity: 0.7 },
-  progressBg: { width: '100%', height: 8, backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 4, marginTop: 8, overflow: 'hidden' },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    marginVertical: 20,
+    width: '100%',
+  },
+  sectionTitle: { 
+    marginBottom: 12, 
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  statusBox: { 
+    backgroundColor: 'rgba(0,0,0,0.04)', 
+    padding: 15, 
+    borderRadius: 10, 
+    marginBottom: 15 
+  },
+  statusRow: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center' 
+  },
+  statusLabel: { 
+    fontSize: 14, 
+    opacity: 0.8 
+  },
+  progressBg: { 
+    width: '100%', 
+    height: 8, 
+    backgroundColor: 'rgba(0,0,0,0.1)', 
+    borderRadius: 4, 
+    marginTop: 10, 
+    overflow: 'hidden' 
+  },
   progressBar: { height: '100%' },
-  centeredRow: { alignItems: 'center', marginBottom: 15 },
-  inputContainer: { marginBottom: 15 },
-  input: { borderWidth: 1, borderColor: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: 10, marginTop: 5, backgroundColor: 'rgba(255,255,255,0.8)' },
-  switchBtn: { paddingVertical: 10, paddingHorizontal: 15, borderRadius: 8 },
-  saveButton: { backgroundColor: '#0a7ea4', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 5 },
-  uploadButton: { backgroundColor: '#17a2b8', flexDirection: 'row', padding: 14, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
-  dangerButton: { backgroundColor: '#dc3545', flexDirection: 'row', padding: 14, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 25 },
+  switchBtn: { 
+    paddingVertical: 14, 
+    borderRadius: 10, 
+    width: '100%', 
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }
+  },
+  inputContainer: { marginBottom: 12 },
+  inputLabel: { fontSize: 13, marginBottom: 4, fontWeight: '600' },
+  input: { 
+    borderWidth: 1, 
+    borderColor: 'rgba(0,0,0,0.15)', 
+    borderRadius: 8, 
+    padding: 12, 
+    backgroundColor: '#ffffff',
+    fontSize: 15
+  },
+  saveButton: { 
+    backgroundColor: '#0a7ea4', 
+    padding: 14, 
+    borderRadius: 8, 
+    alignItems: 'center', 
+    marginTop: 5 
+  },
+  fileActionsContainer: {
+    marginTop: 10,
+    gap: 12,
+  },
+  uploadButton: { 
+    backgroundColor: '#17a2b8', 
+    flexDirection: 'row', 
+    padding: 14, 
+    borderRadius: 8, 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
+  dangerButton: { 
+    backgroundColor: '#dc3545', 
+    flexDirection: 'row', 
+    padding: 14, 
+    borderRadius: 8, 
+    alignItems: 'center', 
+    justifyContent: 'center' 
+  },
   disabledBtn: { opacity: 0.6 },
   btnText: { color: '#ffffff', fontWeight: 'bold', fontSize: 15 },
-  slidesContainer: { maxHeight: 160, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)', borderRadius: 8, padding: 8, marginBottom: 8, backgroundColor: 'rgba(255,255,255,0.4)' },
-  slideItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(0,0,0,0.1)' },
-  slideName: { marginLeft: 8, fontSize: 13, flex: 1 },
-  emptyText: { textAlign: 'center', marginVertical: 15, fontStyle: 'italic', opacity: 0.5 },
-  ipSmallText: { position: 'absolute', bottom: 8, left: 12, fontSize: 10, color: 'gray' }
+  
+  // Estilos de la lista horizontal y miniaturas
+  slidesListContainer: { 
+    borderWidth: 1, 
+    borderColor: 'rgba(0,0,0,0.1)', 
+    borderRadius: 8, 
+    marginBottom: 5, 
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    overflow: 'hidden' 
+  },
+  horizontalScrollContent: { 
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8
+  },
+  thumbItem: { 
+    marginHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbImage: { 
+    width: 85, 
+    height: 85, 
+    borderRadius: 8, 
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: '#fff'
+  },
+  errorThumb: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.03)',
+    padding: 5
+  },
+  errorThumbText: {
+    fontSize: 10, 
+    color: '#666', 
+    marginTop: 6,
+    textAlign: 'center',
+    width: '100%'
+  },
+  emptyText: { textAlign: 'center', marginVertical: 20, fontStyle: 'italic', opacity: 0.5 },
+  ipSmallText: { position: 'absolute', bottom: 10, left: '50%', transform: [{translateX: -20}], fontSize: 11, color: 'gray', opacity: 0.7 }
 });

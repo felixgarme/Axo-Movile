@@ -42,11 +42,13 @@ export default function HomeScreen() {
   const [devices, setDevices] = useState<ESPDevice[]>([]);
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
-  
-  // Referencia para saber si estamos en medio de un escaneo de red
+
+  // NUEVO: Estado para controlar la visibilidad del formulario
+  const [showWifiForm, setShowWifiForm] = useState(false);
+
   const isScanningNetworkRef = useRef(false);
 
-  const updateDev = (id: string, data: Partial<ESPDevice>) => 
+  const updateDev = (id: string, data: Partial<ESPDevice>) =>
     setDevices(prev => prev.map(d => d.id === id ? { ...d, ...data } : d));
 
   useEffect(() => {
@@ -60,14 +62,13 @@ export default function HomeScreen() {
     const intervalId = setInterval(() => {
       syncDevicesFromJson();
       updateDeviceNamesFromNetwork();
-      checkDeviceConnections(); // <--- Nueva comprobación añadida
+      checkDeviceConnections();
     }, 3000);
 
     return () => { clearInterval(intervalId); bleManager.destroy(); };
   }, []);
 
   useEffect(() => {
-    // Actualizado para guardar también el status
     AsyncStorage.setItem('@devices_json', JSON.stringify(devices.map(({ id, name, ip, status }) => ({ id, name, ip, status }))))
       .catch(console.error);
   }, [devices]);
@@ -77,7 +78,7 @@ export default function HomeScreen() {
       const storedStr = await AsyncStorage.getItem('@devices_json');
       if (!storedStr) return;
       const stored: ESPDevice[] = JSON.parse(storedStr);
-      
+
       setDevices(prev => {
         const isDiff = prev.length !== stored.length || prev.some(p => {
           const s = stored.find(sd => sd.id === p.id);
@@ -98,24 +99,23 @@ export default function HomeScreen() {
           if (dataJson && dataJson.name && dataJson.name !== d.name) {
             updateDev(d.id, { name: dataJson.name });
           }
-        } catch {}
+        } catch { }
       });
       return prev;
     });
   };
 
-  // NUEVA FUNCIÓN: Comprueba cada dispositivo para ver si responde con "AXO"
   const checkDeviceConnections = () => {
     if (isScanningNetworkRef.current) return;
 
     setDevices(prev => {
       prev.forEach(async (d) => {
         if (!d.ip || d.ip.includes('Esperando') || d.ip.includes('Error')) return;
-        
+
         try {
           const res = await fetchWithTimeout(`http://${d.ip}/`, 1500);
           const text = await res.text();
-          
+
           if (text.includes('AXO')) {
             if (d.status !== 'Conectado') updateDev(d.id, { status: 'Conectado' });
           } else {
@@ -150,14 +150,17 @@ export default function HomeScreen() {
       if (!isConnected) {
         readyDevice = await device.connect();
       }
-      
+
       readyDevice = await readyDevice.discoverAllServicesAndCharacteristics();
-      
+
       setDevices(prev => {
         const exists = prev.find(d => d.id === readyDevice.id);
         const newDev = { id: readyDevice.id, name: readyDevice.name || 'Desconocido', device: readyDevice, ip: 'Esperando IP...' };
         return exists ? prev.map(d => d.id === readyDevice.id ? { ...d, device: readyDevice } : d) : [...prev, newDev];
       });
+
+      // NUEVO: Mostramos el formulario cuando se conecta por Bluetooth exitosamente
+      setShowWifiForm(true);
 
       readyDevice.monitorCharacteristicForService(SERVICE_UUID, CHARACTERISTIC_UUID, async (err, char) => {
         if (err || !char?.value) return;
@@ -165,14 +168,18 @@ export default function HomeScreen() {
 
         if (msg.startsWith('IP:')) {
           const ipOnly = msg.substring(3);
-          updateDev(readyDevice.id, { ip: ipOnly, status: 'Conectado' }); // Actualizamos el estado al conectar
+          updateDev(readyDevice.id, { ip: ipOnly, status: 'Conectado' });
+
+          // NUEVO: Ocultamos el formulario en cuanto la conexión WiFi es exitosa
+          setShowWifiForm(false);
+
           Alert.alert('Conexión exitosa', `IP: ${ipOnly}`);
-          
+
           try {
             const res = await fetch(`http://${ipOnly}/data`);
             const data = await res.json();
             if (data && data.name) updateDev(readyDevice.id, { name: data.name });
-          } catch {}
+          } catch { }
         } else if (msg === 'No se pudo conectar' || msg === 'ERROR:WIFI') {
           updateDev(readyDevice.id, { ip: 'Error de red', status: 'Desconectado' });
           Alert.alert('Error de conexión', 'Verifica red y contraseña.');
@@ -207,18 +214,18 @@ export default function HomeScreen() {
   };
 
   const scanWifiForDevices = async () => {
-    isScanningNetworkRef.current = true; // Iniciamos bandera de escaneo
+    isScanningNetworkRef.current = true;
 
     try {
       const currentIp = await Network.getIpAddressAsync();
       const subnet = currentIp.match(/^(\d+\.\d+\.\d+)\./)?.[1] || '192.168.1';
-      
+
       let foundAny = false;
       const BATCH_SIZE = 50;
 
       for (let i = 1; i < 255; i += BATCH_SIZE) {
         const promises = [];
-        
+
         for (let j = 0; j < BATCH_SIZE && (i + j) < 255; j++) {
           const targetIp = `${subnet}.${i + j}`;
           if (targetIp !== currentIp) {
@@ -227,11 +234,11 @@ export default function HomeScreen() {
         }
 
         const results = await Promise.allSettled(promises);
-        
+
         const batchFound = results
           .filter((r): r is PromiseFulfilledResult<ESPDevice> => r.status === 'fulfilled' && r.value !== null)
           .map(r => r.value);
-        
+
         if (batchFound.length > 0) {
           foundAny = true;
           setDevices(prev => {
@@ -248,17 +255,17 @@ export default function HomeScreen() {
           });
         }
       }
-      
+
       setConnectionStatus(prev => prev.includes('Bluetooth') ? prev : (foundAny ? 'Búsqueda WiFi completada.' : 'No se encontraron dispositivos WiFi'));
     } catch (error) {
     } finally {
-      isScanningNetworkRef.current = false; // Finalizamos bandera de escaneo
+      isScanningNetworkRef.current = false;
     }
   };
 
   const startSimultaneousScan = async () => {
     if (!(await requestAndroidPermissions())) return setConnectionStatus('Faltan permisos');
-    
+
     setConnectionStatus('Buscando dispositivos (Bluetooth y WiFi)...');
 
     bleManager.stopDeviceScan();
@@ -310,15 +317,17 @@ export default function HomeScreen() {
       } catch (error) { console.error(error); }
     }
 
+    // No cerramos el modal aquí, porque queremos esperar a que el ESP confirme por Bluetooth que sí se conectó exitosamente (recibiendo la IP)
     Alert.alert(
-      successCount > 0 ? 'Éxito' : 'Error', 
-      successCount > 0 ? `Credenciales enviadas a ${successCount} dispositivo(s).` : 'No se pudieron enviar los datos.'
+      successCount > 0 ? 'Enviando...' : 'Error',
+      successCount > 0 ? `Credenciales enviadas a ${successCount} dispositivo(s). Esperando confirmación...` : 'No se pudieron enviar los datos.'
     );
   };
 
   return (
     <ThemedView style={styles.mainContainer}>
-      {devices.some(d => d.device) && (
+      {/* NUEVO: Agregamos la condición de showWifiForm para renderizar el componente */}
+      {showWifiForm && devices.some(d => d.device) && (
         <WifiConfigForm ssid={ssid} setSsid={setSsid} password={password} setPassword={setPassword} onSend={sendWiFiCredentials} />
       )}
 
